@@ -9,12 +9,14 @@ ASSUME N >= 2
 (*--fair algorithm DM_Mutex
 
 variables
-  Messages     = <<>>;
+  Messages     = [i \in 1..N |-> <<>>];
   clocks       = [i \in 1..N |-> 0];
   accordEnvoye = [i \in 1..N |-> 0];
   accordTS     = [i \in 1..N |-> -1];
   waitQueue    = [i \in 1..N |-> <<>>];
   nbAccords    = [i \in 1..N |-> 0];
+  accordRecus  = [i \in 1..N |-> {}];
+  accordRestitues = [i \in 1..N |-> {}];
   wantsCS      = [i \in 1..N |-> FALSE];
   gotEchec     = [i \in 1..N |-> FALSE];
 
@@ -24,9 +26,6 @@ define
   Right(i)   == (i % N) + 1
   Voisins(i) == {Left(i), Right(i)}
   NbVoisins  == 2
-
-  RemoveAt(seq, k) ==
-    SubSeq(seq, 1, k-1) \o SubSeq(seq, k+1, Len(seq))
 
   QHead(q) == q[1]
   QTail(q) == SubSeq(q, 2, Len(q))
@@ -43,15 +42,13 @@ macro SyncClock(i, ts) begin
 end macro;
 
 macro Send(t, from, to, ts) begin
-  Messages := Append(Messages,
+  Messages[to] := Append(Messages[to],
     [type |-> t, ts |-> ts, from |-> from, to |-> to]);
 end macro;
 
 
 fair process p \in ProcSet1
 variables
-  k     = 0;
-  found = FALSE;
   msg   = [type |-> "", ts |-> 0, from |-> 0, to |-> 0];
 begin
 
@@ -61,40 +58,35 @@ Request:
   wantsCS[self]   := TRUE;
   gotEchec[self]  := FALSE;
   nbAccords[self] := 0;
+  accordRecus[self] := {};
+  accordRestitues[self] := {};
   IncClock(self);
-S1:
-  Send("DEMANDE", self, Left(self),  clocks[self]);
-S2:
-  Send("DEMANDE", self, Right(self), clocks[self]);
+  Messages := [Messages EXCEPT
+    ![Left(self)]  = Append(@, [type |-> "DEMANDE", ts |-> clocks[self], from |-> self, to |-> Left(self)]),
+    ![Right(self)] = Append(@, [type |-> "DEMANDE", ts |-> clocks[self], from |-> self, to |-> Right(self)])];
 
 \* ATTENTE
 \* Boucle : on traite un message a la fois jusqu'a avoir 2 ACCORD.
 \* on traite TOUS les types de messages (pas seulement ACCORD)
 \* pour eviter les interblocages.
 Wait:
-  if nbAccords[self] = NbVoisins then goto CS end if;
-
-I:
-  found := FALSE;
-  k     := 1;
-
-Scan:
-  while k <= Len(Messages) /\ ~found do
-    if Messages[k].to = self then
-      msg      := Messages[k];
-      Messages := RemoveAt(Messages, k);
-      found    := TRUE;
-    else
-      k := k + 1;
-    end if;
-  end while;
-
-  if ~found then goto Wait end if;
+  if nbAccords[self] = NbVoisins then 
+    goto CS;
+  elsif Len(Messages[self]) = 0 then
+    goto Wait;
+  else
+    msg            := QHead(Messages[self]);
+    Messages[self] := QTail(Messages[self]);
+  end if;
 
   \* ACCORD recu
  II: if msg.type = "ACCORD" then
     SyncClock(self, msg.ts);
-    nbAccords[self] := nbAccords[self] + 1;
+    if msg.from \notin accordRecus[self] 
+      /\ msg.from \notin accordRestitues[self] then
+      accordRecus[self] := accordRecus[self] \union {msg.from};
+      nbAccords[self] := nbAccords[self] + 1;
+    end if;
 
   \* ECHEC recu : on enregistre l'echec, on met la demande en file.
   \* (L'emetteur nous mettra en file et nous enverra un ACCORD plus tard.)
@@ -144,6 +136,11 @@ Scan:
       S6:
         IncClock(self);
         Send("RESTITUTION", self, msg.from, clocks[self]);
+        accordRestitues[self] := accordRestitues[self] \union {msg.from};
+        if msg.from \in accordRecus[self] then
+          accordRecus[self] := accordRecus[self] \ {msg.from};
+          nbAccords[self] := nbAccords[self] - 1;
+        end if;
     end if;
 
   \* RESTITUTION recue
@@ -209,23 +206,24 @@ Release:
   wantsCS[self]      := FALSE;
   nbAccords[self]    := 0;
   accordEnvoye[self] := 0;
+  accordRecus[self]  := {};
+  accordRestitues[self] := {};
   accordTS[self]     := -1;
   waitQueue[self]    := <<>>;
   gotEchec[self]     := FALSE;
   IncClock(self);
-S7:
-  Send("LIBERATION", self, Left(self),  clocks[self]);
-S8:
-  Send("LIBERATION", self, Right(self), clocks[self]);
+  Messages := [Messages EXCEPT
+    ![Left(self)]  = Append(@, [type |-> "LIBERATION", ts |-> clocks[self], from |-> self, to |-> Left(self)]),
+    ![Right(self)] = Append(@, [type |-> "LIBERATION", ts |-> clocks[self], from |-> self, to |-> Right(self)])];
 
-  goto Request;
+  goto Done;
 
 end process;
 end algorithm;*)
-
-\* BEGIN TRANSLATION (chksum(pcal) = "3ec615d6" /\ chksum(tla) = "33b860be") (chksum(pcal) = "3ec615d6" /\ chksum(tla) = "33b860be") (chksum(pcal) = "3ec615d6" /\ chksum(tla) = "33b860be") (chksum(pcal) = "18c28796" /\ chksum(tla) = "600187") (chksum(pcal) = "18c28796" /\ chksum(tla) = "600187") (chksum(pcal) = "18c28796" /\ chksum(tla) = "600187") (chksum(pcal) = "af2b480c" /\ chksum(tla) = "a9601f75") (chksum(pcal) = "af2b480c" /\ chksum(tla) = "a9601f75") (chksum(pcal) = "af2b480c" /\ chksum(tla) = "a9601f75")
+ 
+\* BEGIN TRANSLATION (chksum(pcal) = "db90c263" /\ chksum(tla) = "71b511df") (chksum(pcal) = "3ec615d6" /\ chksum(tla) = "33b860be") (chksum(pcal) = "3ec615d6" /\ chksum(tla) = "33b860be") (chksum(pcal) = "18c28796" /\ chksum(tla) = "600187") (chksum(pcal) = "18c28796" /\ chksum(tla) = "600187") (chksum(pcal) = "18c28796" /\ chksum(tla) = "600187") (chksum(pcal) = "af2b480c" /\ chksum(tla) = "a9601f75") (chksum(pcal) = "af2b480c" /\ chksum(tla) = "a9601f75") (chksum(pcal) = "af2b480c" /\ chksum(tla) = "a9601f75")
 VARIABLES Messages, clocks, accordEnvoye, accordTS, waitQueue, nbAccords, 
-          wantsCS, gotEchec, pc
+          accordRecus, accordRestitues, wantsCS, gotEchec, pc
 
 (* define statement *)
 Left(i)    == ((i - 2) % N) + 1
@@ -233,31 +231,28 @@ Right(i)   == (i % N) + 1
 Voisins(i) == {Left(i), Right(i)}
 NbVoisins  == 2
 
-RemoveAt(seq, k) ==
-  SubSeq(seq, 1, k-1) \o SubSeq(seq, k+1, Len(seq))
-
 QHead(q) == q[1]
 QTail(q) == SubSeq(q, 2, Len(q))
 
-VARIABLES k, found, msg
+VARIABLE msg
 
 vars == << Messages, clocks, accordEnvoye, accordTS, waitQueue, nbAccords, 
-           wantsCS, gotEchec, pc, k, found, msg >>
+           accordRecus, accordRestitues, wantsCS, gotEchec, pc, msg >>
 
 ProcSet == (ProcSet1)
 
 Init == (* Global variables *)
-        /\ Messages = <<>>
+        /\ Messages = [i \in 1..N |-> <<>>]
         /\ clocks = [i \in 1..N |-> 0]
         /\ accordEnvoye = [i \in 1..N |-> 0]
         /\ accordTS = [i \in 1..N |-> -1]
         /\ waitQueue = [i \in 1..N |-> <<>>]
         /\ nbAccords = [i \in 1..N |-> 0]
+        /\ accordRecus = [i \in 1..N |-> {}]
+        /\ accordRestitues = [i \in 1..N |-> {}]
         /\ wantsCS = [i \in 1..N |-> FALSE]
         /\ gotEchec = [i \in 1..N |-> FALSE]
         (* Process p *)
-        /\ k = [self \in ProcSet1 |-> 0]
-        /\ found = [self \in ProcSet1 |-> FALSE]
         /\ msg = [self \in ProcSet1 |-> [type |-> "", ts |-> 0, from |-> 0, to |-> 0]]
         /\ pc = [self \in ProcSet |-> "Request"]
 
@@ -265,61 +260,38 @@ Request(self) == /\ pc[self] = "Request"
                  /\ wantsCS' = [wantsCS EXCEPT ![self] = TRUE]
                  /\ gotEchec' = [gotEchec EXCEPT ![self] = FALSE]
                  /\ nbAccords' = [nbAccords EXCEPT ![self] = 0]
+                 /\ accordRecus' = [accordRecus EXCEPT ![self] = {}]
+                 /\ accordRestitues' = [accordRestitues EXCEPT ![self] = {}]
                  /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-                 /\ pc' = [pc EXCEPT ![self] = "S1"]
-                 /\ UNCHANGED << Messages, accordEnvoye, accordTS, waitQueue, 
-                                 k, found, msg >>
-
-S1(self) == /\ pc[self] = "S1"
-            /\ Messages' =           Append(Messages,
-                           [type |-> "DEMANDE", ts |-> (clocks[self]), from |-> self, to |-> (Left(self))])
-            /\ pc' = [pc EXCEPT ![self] = "S2"]
-            /\ UNCHANGED << clocks, accordEnvoye, accordTS, waitQueue, 
-                            nbAccords, wantsCS, gotEchec, k, found, msg >>
-
-S2(self) == /\ pc[self] = "S2"
-            /\ Messages' =           Append(Messages,
-                           [type |-> "DEMANDE", ts |-> (clocks[self]), from |-> self, to |-> (Right(self))])
-            /\ pc' = [pc EXCEPT ![self] = "Wait"]
-            /\ UNCHANGED << clocks, accordEnvoye, accordTS, waitQueue, 
-                            nbAccords, wantsCS, gotEchec, k, found, msg >>
+                 /\ Messages' =           [Messages EXCEPT
+                                ![Left(self)]  = Append(@, [type |-> "DEMANDE", ts |-> clocks'[self], from |-> self, to |-> Left(self)]),
+                                ![Right(self)] = Append(@, [type |-> "DEMANDE", ts |-> clocks'[self], from |-> self, to |-> Right(self)])]
+                 /\ pc' = [pc EXCEPT ![self] = "Wait"]
+                 /\ UNCHANGED << accordEnvoye, accordTS, waitQueue, msg >>
 
 Wait(self) == /\ pc[self] = "Wait"
               /\ IF nbAccords[self] = NbVoisins
                     THEN /\ pc' = [pc EXCEPT ![self] = "CS"]
-                    ELSE /\ pc' = [pc EXCEPT ![self] = "I"]
-              /\ UNCHANGED << Messages, clocks, accordEnvoye, accordTS, 
-                              waitQueue, nbAccords, wantsCS, gotEchec, k, 
-                              found, msg >>
-
-I(self) == /\ pc[self] = "I"
-           /\ found' = [found EXCEPT ![self] = FALSE]
-           /\ k' = [k EXCEPT ![self] = 1]
-           /\ pc' = [pc EXCEPT ![self] = "Scan"]
-           /\ UNCHANGED << Messages, clocks, accordEnvoye, accordTS, waitQueue, 
-                           nbAccords, wantsCS, gotEchec, msg >>
-
-Scan(self) == /\ pc[self] = "Scan"
-              /\ IF k[self] <= Len(Messages) /\ ~found[self]
-                    THEN /\ IF Messages[k[self]].to = self
-                               THEN /\ msg' = [msg EXCEPT ![self] = Messages[k[self]]]
-                                    /\ Messages' = RemoveAt(Messages, k[self])
-                                    /\ found' = [found EXCEPT ![self] = TRUE]
-                                    /\ k' = k
-                               ELSE /\ k' = [k EXCEPT ![self] = k[self] + 1]
-                                    /\ UNCHANGED << Messages, found, msg >>
-                         /\ pc' = [pc EXCEPT ![self] = "Scan"]
-                    ELSE /\ IF ~found[self]
+                         /\ UNCHANGED << Messages, msg >>
+                    ELSE /\ IF Len(Messages[self]) = 0
                                THEN /\ pc' = [pc EXCEPT ![self] = "Wait"]
-                               ELSE /\ pc' = [pc EXCEPT ![self] = "II"]
-                         /\ UNCHANGED << Messages, k, found, msg >>
+                                    /\ UNCHANGED << Messages, msg >>
+                               ELSE /\ msg' = [msg EXCEPT ![self] = QHead(Messages[self])]
+                                    /\ Messages' = [Messages EXCEPT ![self] = QTail(Messages[self])]
+                                    /\ pc' = [pc EXCEPT ![self] = "II"]
               /\ UNCHANGED << clocks, accordEnvoye, accordTS, waitQueue, 
-                              nbAccords, wantsCS, gotEchec >>
+                              nbAccords, accordRecus, accordRestitues, wantsCS, 
+                              gotEchec >>
 
 II(self) == /\ pc[self] = "II"
             /\ IF msg[self].type = "ACCORD"
                   THEN /\ clocks' = [clocks EXCEPT ![self] = (IF clocks[self] > (msg[self].ts) THEN clocks[self] ELSE (msg[self].ts)) + 1]
-                       /\ nbAccords' = [nbAccords EXCEPT ![self] = nbAccords[self] + 1]
+                       /\ IF  msg[self].from \notin accordRecus[self]
+                             /\ msg[self].from \notin accordRestitues[self]
+                             THEN /\ accordRecus' = [accordRecus EXCEPT ![self] = accordRecus[self] \union {msg[self].from}]
+                                  /\ nbAccords' = [nbAccords EXCEPT ![self] = nbAccords[self] + 1]
+                             ELSE /\ TRUE
+                                  /\ UNCHANGED << nbAccords, accordRecus >>
                        /\ pc' = [pc EXCEPT ![self] = "W1"]
                        /\ UNCHANGED << accordEnvoye, accordTS, waitQueue, 
                                        gotEchec >>
@@ -374,113 +346,113 @@ II(self) == /\ pc[self] = "II"
                                                                                               accordTS, 
                                                                                               waitQueue >>
                                   /\ UNCHANGED gotEchec
-                       /\ UNCHANGED nbAccords
-            /\ UNCHANGED << Messages, wantsCS, k, found, msg >>
+                       /\ UNCHANGED << nbAccords, accordRecus >>
+            /\ UNCHANGED << Messages, accordRestitues, wantsCS, msg >>
 
 S5(self) == /\ pc[self] = "S5"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-            /\ Messages' =           Append(Messages,
-                           [type |-> "ACCORD", ts |-> (clocks'[self]), from |-> self, to |-> (msg[self].from)])
+            /\ Messages' = [Messages EXCEPT ![(msg[self].from)] =               Append(Messages[(msg[self].from)],
+                                                                  [type |-> "ACCORD", ts |-> (clocks'[self]), from |-> self, to |-> (msg[self].from)])]
             /\ accordEnvoye' = [accordEnvoye EXCEPT ![self] = msg[self].from]
             /\ accordTS' = [accordTS EXCEPT ![self] = msg[self].ts]
             /\ pc' = [pc EXCEPT ![self] = "W1"]
-            /\ UNCHANGED << waitQueue, nbAccords, wantsCS, gotEchec, k, found, 
-                            msg >>
+            /\ UNCHANGED << waitQueue, nbAccords, accordRecus, accordRestitues, 
+                            wantsCS, gotEchec, msg >>
 
 S4(self) == /\ pc[self] = "S4"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-            /\ Messages' =           Append(Messages,
-                           [type |-> "SONDAGE", ts |-> (clocks'[self]), from |-> self, to |-> (accordEnvoye[self])])
+            /\ Messages' = [Messages EXCEPT ![(accordEnvoye[self])] =               Append(Messages[(accordEnvoye[self])],
+                                                                      [type |-> "SONDAGE", ts |-> (clocks'[self]), from |-> self, to |-> (accordEnvoye[self])])]
             /\ waitQueue' = [waitQueue EXCEPT ![self] = Append(waitQueue[self], [from |-> msg[self].from, ts |-> msg[self].ts])]
             /\ pc' = [pc EXCEPT ![self] = "W1"]
-            /\ UNCHANGED << accordEnvoye, accordTS, nbAccords, wantsCS, 
-                            gotEchec, k, found, msg >>
+            /\ UNCHANGED << accordEnvoye, accordTS, nbAccords, accordRecus, 
+                            accordRestitues, wantsCS, gotEchec, msg >>
 
 S3(self) == /\ pc[self] = "S3"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-            /\ Messages' =           Append(Messages,
-                           [type |-> "ECHEC", ts |-> (clocks'[self]), from |-> self, to |-> (msg[self].from)])
+            /\ Messages' = [Messages EXCEPT ![(msg[self].from)] =               Append(Messages[(msg[self].from)],
+                                                                  [type |-> "ECHEC", ts |-> (clocks'[self]), from |-> self, to |-> (msg[self].from)])]
             /\ waitQueue' = [waitQueue EXCEPT ![self] = Append(waitQueue[self], [from |-> msg[self].from, ts |-> msg[self].ts])]
             /\ pc' = [pc EXCEPT ![self] = "W1"]
-            /\ UNCHANGED << accordEnvoye, accordTS, nbAccords, wantsCS, 
-                            gotEchec, k, found, msg >>
+            /\ UNCHANGED << accordEnvoye, accordTS, nbAccords, accordRecus, 
+                            accordRestitues, wantsCS, gotEchec, msg >>
 
 S6(self) == /\ pc[self] = "S6"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-            /\ Messages' =           Append(Messages,
-                           [type |-> "RESTITUTION", ts |-> (clocks'[self]), from |-> self, to |-> (msg[self].from)])
+            /\ Messages' = [Messages EXCEPT ![(msg[self].from)] =               Append(Messages[(msg[self].from)],
+                                                                  [type |-> "RESTITUTION", ts |-> (clocks'[self]), from |-> self, to |-> (msg[self].from)])]
+            /\ accordRestitues' = [accordRestitues EXCEPT ![self] = accordRestitues[self] \union {msg[self].from}]
+            /\ IF msg[self].from \in accordRecus[self]
+                  THEN /\ accordRecus' = [accordRecus EXCEPT ![self] = accordRecus[self] \ {msg[self].from}]
+                       /\ nbAccords' = [nbAccords EXCEPT ![self] = nbAccords[self] - 1]
+                  ELSE /\ TRUE
+                       /\ UNCHANGED << nbAccords, accordRecus >>
             /\ pc' = [pc EXCEPT ![self] = "W1"]
-            /\ UNCHANGED << accordEnvoye, accordTS, waitQueue, nbAccords, 
-                            wantsCS, gotEchec, k, found, msg >>
+            /\ UNCHANGED << accordEnvoye, accordTS, waitQueue, wantsCS, 
+                            gotEchec, msg >>
 
 W(self) == /\ pc[self] = "W"
            /\ waitQueue' = [waitQueue EXCEPT ![self] = Append(waitQueue[self],
                                                               [from |-> msg[self].from, ts |-> msg[self].ts])]
            /\ pc' = [pc EXCEPT ![self] = "W1"]
            /\ UNCHANGED << Messages, clocks, accordEnvoye, accordTS, nbAccords, 
-                           wantsCS, gotEchec, k, found, msg >>
+                           accordRecus, accordRestitues, wantsCS, gotEchec, 
+                           msg >>
 
 I1(self) == /\ pc[self] = "I1"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-            /\ Messages' =           Append(Messages,
-                           [type |-> "ACCORD", ts |-> (clocks'[self]), from |-> self, to |-> (QHead(waitQueue[self]).from)])
+            /\ Messages' = [Messages EXCEPT ![(QHead(waitQueue[self]).from)] =               Append(Messages[(QHead(waitQueue[self]).from)],
+                                                                               [type |-> "ACCORD", ts |-> (clocks'[self]), from |-> self, to |-> (QHead(waitQueue[self]).from)])]
             /\ accordEnvoye' = [accordEnvoye EXCEPT ![self] = QHead(waitQueue[self]).from]
             /\ accordTS' = [accordTS EXCEPT ![self] = QHead(waitQueue[self]).ts]
             /\ waitQueue' = [waitQueue EXCEPT ![self] = QTail(waitQueue[self])]
             /\ pc' = [pc EXCEPT ![self] = "W"]
-            /\ UNCHANGED << nbAccords, wantsCS, gotEchec, k, found, msg >>
+            /\ UNCHANGED << nbAccords, accordRecus, accordRestitues, wantsCS, 
+                            gotEchec, msg >>
 
 I2(self) == /\ pc[self] = "I2"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-            /\ Messages' =           Append(Messages,
-                           [type |-> "ACCORD", ts |-> (clocks'[self]), from |-> self, to |-> (QHead(waitQueue[self]).from)])
+            /\ Messages' = [Messages EXCEPT ![(QHead(waitQueue[self]).from)] =               Append(Messages[(QHead(waitQueue[self]).from)],
+                                                                               [type |-> "ACCORD", ts |-> (clocks'[self]), from |-> self, to |-> (QHead(waitQueue[self]).from)])]
             /\ accordEnvoye' = [accordEnvoye EXCEPT ![self] = QHead(waitQueue[self]).from]
             /\ accordTS' = [accordTS EXCEPT ![self] = QHead(waitQueue[self]).ts]
             /\ waitQueue' = [waitQueue EXCEPT ![self] = QTail(waitQueue[self])]
             /\ pc' = [pc EXCEPT ![self] = "W1"]
-            /\ UNCHANGED << nbAccords, wantsCS, gotEchec, k, found, msg >>
+            /\ UNCHANGED << nbAccords, accordRecus, accordRestitues, wantsCS, 
+                            gotEchec, msg >>
 
 W1(self) == /\ pc[self] = "W1"
             /\ pc' = [pc EXCEPT ![self] = "Wait"]
             /\ UNCHANGED << Messages, clocks, accordEnvoye, accordTS, 
-                            waitQueue, nbAccords, wantsCS, gotEchec, k, found, 
-                            msg >>
+                            waitQueue, nbAccords, accordRecus, accordRestitues, 
+                            wantsCS, gotEchec, msg >>
 
 CS(self) == /\ pc[self] = "CS"
             /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
             /\ pc' = [pc EXCEPT ![self] = "Release"]
             /\ UNCHANGED << Messages, accordEnvoye, accordTS, waitQueue, 
-                            nbAccords, wantsCS, gotEchec, k, found, msg >>
+                            nbAccords, accordRecus, accordRestitues, wantsCS, 
+                            gotEchec, msg >>
 
 Release(self) == /\ pc[self] = "Release"
                  /\ wantsCS' = [wantsCS EXCEPT ![self] = FALSE]
                  /\ nbAccords' = [nbAccords EXCEPT ![self] = 0]
                  /\ accordEnvoye' = [accordEnvoye EXCEPT ![self] = 0]
+                 /\ accordRecus' = [accordRecus EXCEPT ![self] = {}]
+                 /\ accordRestitues' = [accordRestitues EXCEPT ![self] = {}]
                  /\ accordTS' = [accordTS EXCEPT ![self] = -1]
                  /\ waitQueue' = [waitQueue EXCEPT ![self] = <<>>]
                  /\ gotEchec' = [gotEchec EXCEPT ![self] = FALSE]
                  /\ clocks' = [clocks EXCEPT ![self] = clocks[self] + 1]
-                 /\ pc' = [pc EXCEPT ![self] = "S7"]
-                 /\ UNCHANGED << Messages, k, found, msg >>
+                 /\ Messages' =           [Messages EXCEPT
+                                ![Left(self)]  = Append(@, [type |-> "LIBERATION", ts |-> clocks'[self], from |-> self, to |-> Left(self)]),
+                                ![Right(self)] = Append(@, [type |-> "LIBERATION", ts |-> clocks'[self], from |-> self, to |-> Right(self)])]
+                 /\ pc' = [pc EXCEPT ![self] = "Done"]
+                 /\ msg' = msg
 
-S7(self) == /\ pc[self] = "S7"
-            /\ Messages' =           Append(Messages,
-                           [type |-> "LIBERATION", ts |-> (clocks[self]), from |-> self, to |-> (Left(self))])
-            /\ pc' = [pc EXCEPT ![self] = "S8"]
-            /\ UNCHANGED << clocks, accordEnvoye, accordTS, waitQueue, 
-                            nbAccords, wantsCS, gotEchec, k, found, msg >>
-
-S8(self) == /\ pc[self] = "S8"
-            /\ Messages' =           Append(Messages,
-                           [type |-> "LIBERATION", ts |-> (clocks[self]), from |-> self, to |-> (Right(self))])
-            /\ pc' = [pc EXCEPT ![self] = "Request"]
-            /\ UNCHANGED << clocks, accordEnvoye, accordTS, waitQueue, 
-                            nbAccords, wantsCS, gotEchec, k, found, msg >>
-
-p(self) == Request(self) \/ S1(self) \/ S2(self) \/ Wait(self) \/ I(self)
-              \/ Scan(self) \/ II(self) \/ S5(self) \/ S4(self) \/ S3(self)
-              \/ S6(self) \/ W(self) \/ I1(self) \/ I2(self) \/ W1(self)
-              \/ CS(self) \/ Release(self) \/ S7(self) \/ S8(self)
+p(self) == Request(self) \/ Wait(self) \/ II(self) \/ S5(self) \/ S4(self)
+              \/ S3(self) \/ S6(self) \/ W(self) \/ I1(self) \/ I2(self)
+              \/ W1(self) \/ CS(self) \/ Release(self)
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
@@ -499,31 +471,35 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
   \* TypeOk : invariant de typage
   TypeOk ==
-    /\ Messages \in Seq([type  : {"DEMANDE","ACCORD","ECHEC",
-                                   "SONDAGE","RESTITUTION","LIBERATION"},
-                          ts   : Nat,
-                          from : ProcSet1,
-                          to   : ProcSet1])
+    /\ Messages \in [ProcSet1 -> Seq([type  : {"DEMANDE","ACCORD","ECHEC",
+                                                "SONDAGE","RESTITUTION","LIBERATION"},
+                                       ts   : Nat,
+                                       from : ProcSet1,
+                                       to   : ProcSet1])]
     /\ clocks        \in [ProcSet1 -> Nat]
     /\ accordEnvoye  \in [ProcSet1 -> 0..N]
     /\ accordTS      \in [ProcSet1 -> {-1} \union Nat]
     /\ waitQueue     \in [ProcSet1 -> Seq([from : ProcSet1, ts : Nat])]
     /\ nbAccords     \in [ProcSet1 -> 0..NbVoisins]
+    /\ accordRecus   \in [ProcSet1 -> SUBSET ProcSet1]
+    /\ accordRestitues \in [ProcSet1 -> SUBSET ProcSet1]
     /\ wantsCS       \in [ProcSet1 -> BOOLEAN]
     /\ gotEchec      \in [ProcSet1 -> BOOLEAN]
 
   \* Invariant : chaque message est envoye a un voisin de son emetteur
   VoisinsOk ==
-    \A idx \in 1..Len(Messages) :
-      Messages[idx].to \in Voisins(Messages[idx].from)
+    \A dest \in ProcSet1 :
+      \A idx \in 1..Len(Messages[dest]) :
+        Messages[dest][idx].to \in Voisins(Messages[dest][idx].from)
 
   \* Invariant : deux messages du meme emetteur vers le meme destinataire ont des timestamps distincts.
   TimestampDistinct ==
-    \A i, j \in 1..Len(Messages) :
-      (i # j
-       /\ Messages[i].from = Messages[j].from
-       /\ Messages[i].to   = Messages[j].to)
-      => Messages[i].ts # Messages[j].ts
+    \A dest \in ProcSet1 :
+      \A i, j \in 1..Len(Messages[dest]) :
+        (i # j
+         /\ Messages[dest][i].from = Messages[dest][j].from
+         /\ Messages[dest][i].to   = Messages[dest][j].to)
+        => Messages[dest][i].ts # Messages[dest][j].ts
    
    \* processus i est en section critique
   CS1(i) == pc[i] = "CS"
